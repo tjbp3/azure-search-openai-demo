@@ -5,6 +5,30 @@ import logging
 import mimetypes
 import os
 import time
+import requests
+import os
+
+SERP_API_KEY = os.getenv("SERP_API_KEY")
+SERP_API_URL = "https://serpapi.com/search"
+
+def web_search(query):
+    """Searches Google via SerpAPI and returns top 3 results."""
+    params = {
+        "engine": "google",
+        "q": query,
+        "api_key": SERP_API_KEY,
+        "num": 3  # Get top 3 results
+    }
+    response = requests.get(SERP_API_URL, params=params)
+    results = response.json()
+
+    search_snippets = []
+    if "organic_results" in results:
+        for result in results["organic_results"]:
+            search_snippets.append(f"{result['title']} - {result['snippet']} (URL: {result['link']})")
+
+    return "\n".join(search_snippets) if search_snippets else "No relevant web results found."
+
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Union, cast
 
@@ -183,12 +207,22 @@ async def ask(auth_claims: Dict[str, Any]):
             approach = cast(Approach, current_app.config[CONFIG_ASK_VISION_APPROACH])
         else:
             approach = cast(Approach, current_app.config[CONFIG_ASK_APPROACH])
-        r = await approach.run(
-            request_json["messages"], context=context, session_state=request_json.get("session_state")
-        )
-        return jsonify(r)
-    except Exception as error:
-        return error_response(error, "/ask")
+            # Extract user query
+            user_query = request_json["messages"][-1]["content"]
+
+            # Perform web search if needed
+            web_results = web_search(user_query)
+
+            # Append web search results to the context
+            context["web_results"] = web_results
+
+            r = await approach.run(
+                request_json["messages"], context=context, session_state=request_json.get("session_state")
+            )
+            return jsonify(r)
+
+                except Exception as error:
+                    return error_response(error, "/ask")
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -231,11 +265,21 @@ async def chat(auth_claims: Dict[str, Any]):
                 current_app.config[CONFIG_CHAT_HISTORY_COSMOS_ENABLED],
                 current_app.config[CONFIG_CHAT_HISTORY_BROWSER_ENABLED],
             )
-        result = await approach.run(
-            request_json["messages"],
-            context=context,
-            session_state=session_state,
-        )
+ # Check if the user query requires web search
+user_query = request_json["messages"][-1]["content"]
+
+# Perform web search if needed
+web_results = web_search(user_query)  
+
+# Append web search results to the context
+context["web_results"] = web_results 
+
+result = await approach.run(
+    request_json["messages"],
+    context=context,
+    session_state=session_state,
+)
+
         return jsonify(result)
     except Exception as error:
         return error_response(error, "/chat")
